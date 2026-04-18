@@ -358,6 +358,7 @@ do
 
             local logForm = tab:PageSection({ Title = "Changelog" }):Form()
             local logData = {
+                {Ver = "Version 1.1.9", Desc = "Fixed Webhook Match Ended & Added Notification"},
                 {Ver = "Version 1.1.8", Desc = "Added Auto Webhook on Match Ended (Includes Total Items)"},
                 {Ver = "Version 1.1.7", Desc = "Removed Webhook Backend Logic for better performance (UI Only)"}
             }
@@ -646,7 +647,7 @@ do
     end
 end
 
-ShowNotif("Script Loaded Successfully", "Version 1.1.8 (Webhook Included)", cascade.Symbols.bell)
+ShowNotif("Script Loaded Successfully", "Version 1.1.9 (Webhook Included)", cascade.Symbols.bell)
 
 task.spawn(function()
     while true do
@@ -976,21 +977,31 @@ task.spawn(function()
         local PlayerData = GetDataModule.GetData(player)
         
         local rewardText = ""
-        if currentRewards and #currentRewards > 0 then
+        if currentRewards and type(currentRewards) == "table" and #currentRewards > 0 then
             for _, item in pairs(currentRewards) do
-                local itemName = tostring(item.Name)
-                local itemAmount = item:FindFirstChild("Amount") and tostring(item.Amount.Value) or "1"
-                
-                local totalAmount = 0
-                if PlayerData then
-                    if PlayerData.Items and PlayerData.Items:FindFirstChild(itemName) then
-                        totalAmount = PlayerData.Items[itemName].Amount.Value
-                    elseif PlayerData.Data and PlayerData.Data:FindFirstChild(itemName) then
-                        totalAmount = PlayerData.Data[itemName].Value
+                pcall(function()
+                    local itemName = tostring(item.Name or "Unknown")
+                    local itemAmount = "1"
+                    
+                    if typeof(item) == "Instance" and item:FindFirstChild("Amount") then
+                        itemAmount = tostring(item.Amount.Value)
+                    elseif type(item) == "table" and item.Amount then
+                        if type(item.Amount) == "table" then itemAmount = tostring(item.Amount.Value or 1)
+                        elseif typeof(item.Amount) == "Instance" then itemAmount = tostring(item.Amount.Value)
+                        else itemAmount = tostring(item.Amount) end
                     end
-                end
-                
-                rewardText = rewardText .. "• " .. itemName .. " (x" .. FormatNumber(itemAmount) .. ") [total:" .. FormatNumber(totalAmount) .. "]\n"
+                    
+                    local totalAmount = 0
+                    if PlayerData then
+                        if PlayerData.Items and PlayerData.Items:FindFirstChild(itemName) then
+                            totalAmount = PlayerData.Items[itemName].Amount.Value
+                        elseif PlayerData.Data and PlayerData.Data:FindFirstChild(itemName) then
+                            totalAmount = PlayerData.Data[itemName].Value
+                        end
+                    end
+                    
+                    rewardText = rewardText .. "• " .. itemName .. " (x" .. FormatNumber(itemAmount) .. ") [total:" .. FormatNumber(totalAmount) .. "]\n"
+                end)
             end
         else
             rewardText = "ไม่มีรางวัลดรอป"
@@ -1015,6 +1026,8 @@ task.spawn(function()
             }
         }
 
+        ShowNotif("Webhook", "กำลังส่งข้อมูล Match Ended ไปที่ Discord...", cascade.Symbols.network)
+
         if requestFunc then
             pcall(function()
                 requestFunc({
@@ -1035,17 +1048,19 @@ task.spawn(function()
         if action == "Rewards - Items" then
             currentRewards = data
         elseif action == "Update - EndedScreen" then
-            local ValuesGame = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Game")
-            
-            currentStageInfo = {
-                Gamemode = ValuesGame:WaitForChild("Gamemode").Value,
-                World = ValuesGame:WaitForChild("World").Value,
-                Level = ValuesGame:WaitForChild("Level").Value,
-                Difficulty = ValuesGame:WaitForChild("Difficulty").Value,
-                TotalTime = data.TotalTime or 0
-            }
-            
-            SendEndMatchLog()
+            pcall(function()
+                local ValuesGame = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Game")
+                
+                currentStageInfo = {
+                    Gamemode = ValuesGame:WaitForChild("Gamemode").Value,
+                    World = ValuesGame:WaitForChild("World").Value,
+                    Level = ValuesGame:WaitForChild("Level").Value,
+                    Difficulty = ValuesGame:WaitForChild("Difficulty").Value,
+                    TotalTime = data.TotalTime or 0
+                }
+                
+                SendEndMatchLog()
+            end)
         end
     end)
 end)
