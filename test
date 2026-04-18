@@ -358,9 +358,9 @@ do
 
             local logForm = tab:PageSection({ Title = "Changelog" }):Form()
             local logData = {
+                {Ver = "Version 1.1.11", Desc = "Updated Custom Webhook Format for Match Ended"},
                 {Ver = "Version 1.1.10", Desc = "Exact Logic Merged for End Match Webhook"},
-                {Ver = "Version 1.1.8", Desc = "Added Auto Webhook on Match Ended (Includes Total Items)"},
-                {Ver = "Version 1.1.7", Desc = "Removed Webhook Backend Logic for better performance (UI Only)"}
+                {Ver = "Version 1.1.8", Desc = "Added Auto Webhook on Match Ended (Includes Total Items)"}
             }
             for _, log in ipairs(logData) do
                 local r = logForm:Row()
@@ -647,7 +647,7 @@ do
     end
 end
 
-ShowNotif("Script Loaded Successfully", "Version 1.1.10 (Exact Webhook Logic Merged)", cascade.Symbols.bell)
+ShowNotif("Script Loaded Successfully", "Version 1.1.11 (Custom Embed Merged)", cascade.Symbols.bell)
 
 task.spawn(function()
     while true do
@@ -963,7 +963,7 @@ task.spawn(function()
 end)
 
 -------------------------------------------------------------------------
---- [ Exact Merge: Auto Match Ended Webhook System ] ---
+--- [ Exact Merge: Auto Match Ended Webhook System (Custom Format) ] ---
 -------------------------------------------------------------------------
 task.spawn(function()
     local GameEndedUI_Event = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
@@ -995,22 +995,60 @@ task.spawn(function()
                 rewardText = rewardText .. "• " .. itemName .. " (x" .. itemAmount .. ") [total:" .. tostring(totalAmount) .. "]\n"
             end
         else
-            rewardText = "ไม่มีรางวัลดรอป"
+            rewardText = "ไม่มีรางวัลดรอป\n"
         end
+
+        -- จัด Format เวลาเป็น นาที:วินาที (เช่น 67:67 แบบที่คุณยกตัวอย่าง)
+        local totalSeconds = currentStageInfo.TotalTime or 0
+        local minutes = math.floor(totalSeconds / 60)
+        local seconds = totalSeconds % 60
+        local formattedTime = string.format("%02d:%02d", minutes, seconds)
+
+        -- ดึงเลเวลของผู้เล่น
+        local playerLevel = "N/A"
+        if PlayerData and PlayerData.Data and PlayerData.Data:FindFirstChild("Level") then
+            playerLevel = tostring(PlayerData.Data.Level.Value)
+        end
+
+        -- จัดข้อความของส่วน Information แบบเป๊ะๆ ตามที่คุณขอ
+        local infoString = string.format(
+            "`⭐` • Username: ||%s||\n`🎊` • Level: %s\n`🌪️` • Mode: %s\n`🌎` • Map/World: **%s - %s**\n`⏳` • TotalTime: **%s**\n**[ Rewards ]**\n```\n%s```",
+            player.Name,
+            playerLevel,
+            tostring(currentStageInfo.Gamemode or "N/A") .. " (" .. tostring(currentStageInfo.Difficulty or "N/A") .. ")",
+            tostring(currentStageInfo.World or "N/A"),
+            tostring(currentStageInfo.Level or "N/A"),
+            formattedTime,
+            rewardText
+        )
 
         local payload = {
             embeds = {
                 {
-                    title = "🎮 Match Ended Summary",
-                    color = tonumber("0x00FF00"),
+                    timestamp = DateTime.now():ToIsoDate(),
+                    footer = {
+                        text = "Jiramet Hub (TH)",
+                        icon_url = "https://img1.pic.in.th/images/1000091508.md.png"
+                    },
+                    image = { url = "" },
+                    thumbnail = {
+                        url = "https://img2.pic.in.th/1000092227.th.jpg"
+                    },
+                    author = {
+                        name = "[👈JJK PART 2] Re:Rangers X",
+                        url = "https://www.roblox.com/share?code=3f029d7d2a92274e969aae43736011e9&type=ExperienceDetails&stamp=1776061797166",
+                        icon_url = "https://img2.pic.in.th/1000092227.md.jpg"
+                    },
                     fields = {
-                        { name = "🌍 ด่าน", value = currentStageInfo.World .. " - " .. currentStageInfo.Level, inline = true },
-                        { name = "⚔️ โหมด", value = currentStageInfo.Gamemode .. " (" .. currentStageInfo.Difficulty .. ")", inline = true },
-                        { name = "⏱️ เวลาที่ใช้", value = tostring(currentStageInfo.TotalTime) .. " วินาที", inline = true },
-                        { name = "🎁 รางวัลที่ได้รับ", value = rewardText, inline = false }
+                        {
+                            name = "Information",
+                            value = infoString,
+                            inline = true
+                        }
                     }
                 }
-            }
+            },
+            components = {}
         }
 
         if requestFunc then
