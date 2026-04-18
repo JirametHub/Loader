@@ -32,40 +32,11 @@ local function FormatNumber(n)
     return tostring(math.floor(num)):reverse():gsub("%d%d%d", "%1,"):reverse():gsub("^,", "")
 end
 
-local function SafeToNumber(val)
-    if type(val) == "number" then return val end
-    if type(val) == "string" then
-        return tonumber(val:gsub(",", "")) or 0
-    end
-    return 0
-end
-
 local requestFunc = nil
 if type(http_request) == "function" then requestFunc = http_request
 elseif type(request) == "function" then requestFunc = request
 elseif type(syn) == "table" and type(syn.request) == "function" then requestFunc = syn.request
 elseif type(fluxus) == "table" and type(fluxus.request) == "function" then requestFunc = fluxus.request end
-
-local LastGachaUnits = {}
-local function SetupGachaListener()
-    local remote = ReplicatedStorage:FindFirstChild("Remote") and ReplicatedStorage.Remote:FindFirstChild("Client") and ReplicatedStorage.Remote.Client:FindFirstChild("UI") and ReplicatedStorage.Remote.Client.UI:FindFirstChild("Gacha_Units")
-    if remote and remote:IsA("RemoteEvent") then
-        remote.OnClientEvent:Connect(function(units)
-            if type(units) == "table" then
-                LastGachaUnits = {}
-                for _, u in pairs(units) do
-                    if type(u) == "table" then
-                        if u.Name then table.insert(LastGachaUnits, tostring(u.Name))
-                        elseif u.UnitName then table.insert(LastGachaUnits, tostring(u.UnitName)) end
-                    elseif type(u) == "string" then
-                        table.insert(LastGachaUnits, u)
-                    end
-                end
-            end
-        end)
-    end
-end
-task.spawn(SetupGachaListener)
 
 local ConfigFolder = "JirametHubConfig"
 local ConfigFile = ConfigFolder .. "/RangerX.json"
@@ -184,27 +155,6 @@ local function SecureButton(rowObj, labelText, actionFunc)
         end
     end
     return btnClass
-end
-
-local RareUnitsData = {
-    "Mai Sakurajima", "Bunny Girl", "Mai",
-    "Rias Gremory", "Crimson Heiress", "Rias",
-    "Sukuna", "Femkuna", "Ryomen",
-    "Carrot", "Bunny",
-    "Yor", "Thorn Queen",
-    "Gojo", "Femjo",
-    "Mob", "Momo",
-    "Megumin", "Explosion Girl",
-    "Secret", "Mythic", "Legendary", "Exclusive"
-}
-
-local function IsRareUnit(unitName)
-    if not unitName then return false end
-    local lowerName = string.lower(unitName)
-    for _, rareName in ipairs(RareUnitsData) do
-        if string.find(lowerName, string.lower(rareName)) then return true end
-    end
-    return false
 end
 
 local BlackScreenGui = Instance.new("ScreenGui")
@@ -408,7 +358,8 @@ do
 
             local logForm = tab:PageSection({ Title = "Changelog" }):Form()
             local logData = {
-                {Ver = "Version 1.1.6", Desc = "Fixed Webhook Rewards Event Fetching & Format"}
+                {Ver = "Version 1.1.8", Desc = "Added Auto Webhook on Match Ended (Includes Total Items)"},
+                {Ver = "Version 1.1.7", Desc = "Removed Webhook Backend Logic for better performance (UI Only)"}
             }
             for _, log in ipairs(logData) do
                 local r = logForm:Row()
@@ -695,7 +646,7 @@ do
     end
 end
 
-ShowNotif("Script Loaded Successfully", "Version 1.1.6 (Fix Webhook Fetch)", cascade.Symbols.bell)
+ShowNotif("Script Loaded Successfully", "Version 1.1.8 (Webhook Included)", cascade.Symbols.bell)
 
 task.spawn(function()
     while true do
@@ -798,234 +749,6 @@ task.spawn(function()
     end
 end)
 
-local function GetInventorySnapshot(playerData)
-    local snap = { Currency = {}, Units = {}, Items = {} }
-    if not playerData then return snap end
-    
-    local dataFolder = playerData:FindFirstChild("Data")
-    if dataFolder then
-        local gemObj = dataFolder:FindFirstChild("Gem") or dataFolder:FindFirstChild("Gems")
-        local goldObj = dataFolder:FindFirstChild("Gold") or dataFolder:FindFirstChild("Coins")
-        local solObj = dataFolder:FindFirstChild("Sol Token")
-        
-        snap.Currency.Gem = gemObj and SafeToNumber(gemObj.Value) or 0
-        snap.Currency.Gold = goldObj and SafeToNumber(goldObj.Value) or 0
-        snap.Currency.Sol = solObj and SafeToNumber(solObj.Value) or 0
-    end
-    
-    local unitsFolder = playerData:FindFirstChild("Units") or playerData:FindFirstChild("Unit")
-    if unitsFolder then
-        for _, u in ipairs(unitsFolder:GetChildren()) do
-            snap.Units[u.Name] = (snap.Units[u.Name] or 0) + 1
-        end
-    end
-    
-    local itemsFolder = playerData:FindFirstChild("Items")
-    if itemsFolder then
-        for _, i in ipairs(itemsFolder:GetChildren()) do
-            local amtObj = i:FindFirstChild("Amount")
-            if amtObj then
-                snap.Items[i.Name] = (snap.Items[i.Name] or 0) + SafeToNumber(amtObj.Value)
-            end
-        end
-    end
-    
-    return snap
-end
-
-local function CompareSnapshots(old, new, bannerName, amountStr, sellConfig, gachaUnits)
-    bannerName = bannerName or "N/A"
-    amountStr = amountStr or "0x"
-    local currencyText = {}
-    local unitsText = {}
-    local itemsText = {}
-    
-    local goldDiff = (new.Currency.Gold or 0) - (old.Currency.Gold or 0)
-    if goldDiff > 0 then table.insert(currencyText, "- Gold: +" .. FormatNumber(goldDiff) .. " (From Drops/Sell)") end
-    
-    local gemDiff = (new.Currency.Gem or 0) - (old.Currency.Gem or 0)
-    if gemDiff > 0 then table.insert(currencyText, "- Gem: +" .. FormatNumber(gemDiff)) end
-    
-    local totalAmt = tonumber(amountStr:gsub("x", "")) or 0
-    local keptUnits = {}
-    local totalKept = 0
-    for name, count in pairs(new.Units) do
-        local oldC = old.Units[name] or 0
-        if count > oldC then 
-            local diff = count - oldC
-            keptUnits[name] = diff
-            totalKept = totalKept + diff
-        end
-    end
-
-    if gachaUnits and #gachaUnits > 0 then
-        local unitCounts = {}
-        for _, name in ipairs(gachaUnits) do
-            unitCounts[name] = (unitCounts[name] or 0) + 1
-        end
-        for name, count in pairs(unitCounts) do
-            local status = " [SOLD]"
-            if keptUnits[name] and keptUnits[name] > 0 then
-                status = " [KEPT]"
-                keptUnits[name] = keptUnits[name] - 1
-            end
-            table.insert(unitsText, "  👤 " .. name .. " (x" .. count .. ")" .. status)
-        end
-    else
-        if totalKept > 0 then
-            for name, count in pairs(keptUnits) do
-                table.insert(unitsText, "  👤 " .. name .. " (x" .. FormatNumber(count) .. ") [KEPT]")
-            end
-        end
-        if totalKept < totalAmt then
-            local soldAmt = totalAmt - totalKept
-            table.insert(unitsText, "  📦 Sold Units: " .. FormatNumber(soldAmt) .. " (Auto Sold)")
-        end
-    end
-    
-    for name, count in pairs(new.Items) do
-        local oldC = old.Items[name] or 0
-        if count > oldC then 
-            table.insert(itemsText, "- " .. name .. " x" .. FormatNumber(count - oldC)) 
-        end
-    end
-    
-    local finalResult = {}
-    if #currencyText > 0 then
-        table.insert(finalResult, "[ Currency ]")
-        for _, t in ipairs(currencyText) do table.insert(finalResult, t) end
-    end
-    if #unitsText > 0 then
-        table.insert(finalResult, "\n[ Summon Results ]")
-        for _, t in ipairs(unitsText) do table.insert(finalResult, t) end
-    end
-    if #itemsText > 0 then
-        table.insert(finalResult, "\n[ Items ]")
-        for _, t in ipairs(itemsText) do table.insert(finalResult, t) end
-    end
-    if #finalResult == 0 then finalResult = { "🧂 All Sold (เกลือจัดๆ) / No new Units." } end
-    return finalResult
-end
-
-local function SendCapsuleWebhook(capsuleName, amountOpened, rewardsText)
-    local url = JHub.Flags.WebhookURL
-    if url == "" or not url:find("discord") then return end
-
-    local GetDataModule = require(ReplicatedStorage.Shared.GetData)
-    local playerData = GetDataModule.GetData(player)
-    local playerLevel, playerGem, playerGold = "N/A", "N/A", "N/A"
-    
-    pcall(function()
-        if playerData and playerData:FindFirstChild("Data") then
-            if playerData.Data:FindFirstChild("Level") then playerLevel = tostring(playerData.Data.Level.Value) end
-            if playerData.Data:FindFirstChild("Gem") then playerGem = FormatNumber(playerData.Data.Gem.Value) elseif playerData.Data:FindFirstChild("Gems") then playerGem = FormatNumber(playerData.Data.Gems.Value) end
-            if playerData.Data:FindFirstChild("Gold") then playerGold = FormatNumber(playerData.Data.Gold.Value) elseif playerData.Data:FindFirstChild("Coins") then playerGold = FormatNumber(playerData.Data.Coins.Value) end
-        end
-    end)
-
-    local infoContent = string.format("`⭐` • Username: ||%s||\n`🎊` • Level: %s\n<:Gem:1493522800282046475> • Gem: %s\n<:Gold:1493522863628488704> • Gold: %s\nOpen Capsule: %s x%d\n**[ Capsule Drop ]**\n```\n%s\n```", player.Name, playerLevel, playerGem, playerGold, capsuleName, amountOpened, rewardsText)
-    
-    local data = {
-        ["username"] = "Jiramet Hub",
-        ["avatar_url"] = "https://img2.pic.in.th/1000091508.png",
-        ["embeds"] = {
-            {
-                ["timestamp"] = DateTime.now():ToIsoDate(),
-                ["color"] = 65535,
-                ["footer"] = {
-                    ["text"] = "Jiramet Hub (TH)",
-                    ["icon_url"] = "https://img1.pic.in.th/images/1000091508.md.png"
-                },
-                ["image"] = { ["url"] = "" },
-                ["thumbnail"] = {
-                    ["url"] = "https://img1.pic.in.th/images/1000091498.th.jpg"
-                },
-                ["author"] = {
-                    ["name"] = "[🐰EVENT] Re:Rangers X",
-                    ["url"] = "https://www.roblox.com/share?code=3f029d7d2a92274e969aae43736011e9&type=ExperienceDetails&stamp=1776061797166",
-                    ["icon_url"] = "https://img1.pic.in.th/images/1000091498.md.jpg"
-                },
-                ["fields"] = {
-                    {
-                        ["name"] = "Information (Capsule)",
-                        ["value"] = infoContent,
-                        ["inline"] = false
-                    }
-                }
-            }
-        }
-    }
-
-    if requestFunc then pcall(function() requestFunc({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(data) }) end)
-    else pcall(function() game:HttpPost(url, HttpService:JSONEncode(data)) end) end
-end
-
-local function GetSummonWebhookColor(bannerName)
-    local lowerName = string.lower(tostring(bannerName or ""))
-    if lowerName == "sol" then
-        return 16766720
-    elseif lowerName == "rateup" or lowerName == "rate up" then
-        return 16724787
-    elseif lowerName == "standard" then
-        return 3447003
-    end
-    return 10181046
-end
-
-local function SendSummonWebhook(bannerName, amountOpened, rewardsText)
-    local url = JHub.Flags.WebhookURL
-    if url == "" or not url:find("discord") then return end
-
-    local GetDataModule = require(ReplicatedStorage.Shared.GetData)
-    local playerData = GetDataModule.GetData(player)
-    local playerLevel, playerGem, playerGold, playerSol = "N/A", "N/A", "N/A", "N/A"
-
-    pcall(function()
-        if playerData and playerData:FindFirstChild("Data") then
-            if playerData.Data:FindFirstChild("Level") then playerLevel = tostring(playerData.Data.Level.Value) end
-            if playerData.Data:FindFirstChild("Gem") then playerGem = FormatNumber(playerData.Data.Gem.Value) elseif playerData.Data:FindFirstChild("Gems") then playerGem = FormatNumber(playerData.Data.Gems.Value) end
-            if playerData.Data:FindFirstChild("Gold") then playerGold = FormatNumber(playerData.Data.Gold.Value) elseif playerData.Data:FindFirstChild("Coins") then playerGold = FormatNumber(playerData.Data.Coins.Value) end
-            if playerData.Data:FindFirstChild("Sol Token") then playerSol = FormatNumber(playerData.Data["Sol Token"].Value) end
-        end
-    end)
-
-    local infoContent = string.format("`⭐` • Username: ||%s||\n`🎊` • Level: %s\n<:Gem:1493522800282046475> • Gem: %s\n<:Gold:1493522863628488704> • Gold: %s\n`🪙` • Sol Token: %s\nAuto Summon: **%sx %s**\n**[ Summon Drop ]**\n```\n%s\n```", player.Name, playerLevel, playerGem, playerGold, playerSol, amountOpened, bannerName, rewardsText)
-
-    local data = {
-        ["username"] = "Jiramet Hub",
-        ["avatar_url"] = "https://img2.pic.in.th/1000091508.png",
-        ["embeds"] = {
-            {
-                ["timestamp"] = DateTime.now():ToIsoDate(),
-                ["color"] = GetSummonWebhookColor(bannerName),
-                ["footer"] = {
-                    ["text"] = "Jiramet Hub (TH)",
-                    ["icon_url"] = "https://img1.pic.in.th/images/1000091508.md.png"
-                },
-                ["image"] = { ["url"] = "" },
-                ["thumbnail"] = {
-                    ["url"] = "https://img1.pic.in.th/images/1000091498.th.jpg"
-                },
-                ["author"] = {
-                    ["name"] = "[🐰EVENT] Re:Rangers X",
-                    ["url"] = "https://www.roblox.com/share?code=3f029d7d2a92274e969aae43736011e9&type=ExperienceDetails&stamp=1776061797166",
-                    ["icon_url"] = "https://img1.pic.in.th/images/1000091498.md.jpg"
-                },
-                ["fields"] = {
-                    {
-                        ["name"] = string.format("Information (%s)", tostring(bannerName)),
-                        ["value"] = infoContent,
-                        ["inline"] = false
-                    }
-                }
-            }
-        }
-    }
-
-    if requestFunc then pcall(function() requestFunc({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(data) }) end)
-    else pcall(function() game:HttpPost(url, HttpService:JSONEncode(data)) end) end
-end
-
 task.spawn(function()
     while true do
         task.wait(2.5)
@@ -1049,38 +772,18 @@ task.spawn(function()
 
                 local targetBasket = nil
                 local targetAmt = 0
-                local targetName = ""
 
                 if normalAmt > 0 then
                     targetBasket = normalBasket
                     targetAmt = normalAmt
-                    targetName = "Easter Basket"
                 elseif goldenAmt > 0 then
                     targetBasket = goldenBasket
                     targetAmt = goldenAmt
-                    targetName = "Golden Easter Basket"
                 end
 
                 if targetAmt > 0 and targetBasket then
-                    local oldSnap = GetInventorySnapshot(playerData)
-                    
-                    local success, err = pcall(function() itemUseRemote:FireServer(targetBasket, { ["SummonAmount"] = targetAmt }) end)
-                    
+                    pcall(function() itemUseRemote:FireServer(targetBasket, { ["SummonAmount"] = targetAmt }) end)
                     task.wait(5)
-                    
-                    local newSnap = GetInventorySnapshot(playerData)
-                    
-                    local diffs = {}
-                    local compSuccess, compErr = pcall(function() diffs = CompareSnapshots(oldSnap, newSnap, targetName, tostring(targetAmt) .. "x") end)
-                    
-                    if not compSuccess then
-                        diffs = { "⚠️ Error: " .. tostring(compErr) }
-                    end
-                    
-                    if JHub.Flags.EnableWebhook and JHub.Flags.WebhookCapsule then
-                        local text = (#diffs > 0) and table.concat(diffs, "\n") or "No items detected.\n(Check inventory)"
-                        SendCapsuleWebhook(targetName, targetAmt, text)
-                    end
                 end
             end)
         end
@@ -1111,32 +814,8 @@ task.spawn(function()
                 local solTokens = dataFolder:FindFirstChild("Sol Token") and dataFolder["Sol Token"].Value or 0
 
                 local function ProcessSummon(amountStr, bannerName, sellConfig)
-                    local oldSnap = GetInventorySnapshot(playerData)
-                    LastGachaUnits = {}
-                    local success, err = pcall(function() remote:FireServer(amountStr, bannerName, sellConfig) end)
-                    
-                    local waitTime = 4.5
-                    local totalWait = 0
-                    while totalWait < waitTime do
-                        if #LastGachaUnits > 0 then break end
-                        task.wait(0.5)
-                        totalWait = totalWait + 0.5
-                    end
-                    task.wait(1)
-                    
-                    local newSnap = GetInventorySnapshot(playerData)
-                    local diffs = {}
-                    local compSuccess, compErr = pcall(function() diffs = CompareSnapshots(oldSnap, newSnap, bannerName, amountStr, sellConfig, LastGachaUnits) end)
-                    
-                    if not compSuccess then
-                        diffs = { "⚠️ Error: " .. tostring(compErr) }
-                    end
-                    
-                    if JHub.Flags.EnableWebhook and JHub.Flags.WebhookSummon then
-                        local text = (#diffs > 0) and table.concat(diffs, "\n") or "No changes detected.\n(Check inventory or Auto Sell settings)"
-                        local amt = amountStr:gsub("x", "")
-                        SendSummonWebhook(bannerName, amt, text)
-                    end
+                    pcall(function() remote:FireServer(amountStr, bannerName, sellConfig) end)
+                    task.wait(5.5) 
                 end
 
                 if JHub.Flags.AutoSummonSol then
@@ -1259,52 +938,16 @@ local function SmartAutoBuyMax(targetItemName)
     return 0, 0
 end
 
-local function SendMerchantWebhook(boughtItemsText)
-    local url = JHub.Flags.WebhookURL
-    if url == "" or not url:find("discord") then return end
-
-    local GetDataModule = require(ReplicatedStorage.Shared.GetData)
-    local playerData = GetDataModule.GetData(player)
-    local playerLevel, playerGem, playerGold = "N/A", "N/A", "N/A"
-    
-    pcall(function()
-        if playerData and playerData:FindFirstChild("Data") then
-            if playerData.Data:FindFirstChild("Level") then playerLevel = tostring(playerData.Data.Level.Value) end
-            if playerData.Data:FindFirstChild("Gem") then playerGem = FormatNumber(playerData.Data.Gem.Value) elseif playerData.Data:FindFirstChild("Gems") then playerGem = FormatNumber(playerData.Data.Gems.Value) end
-            if playerData.Data:FindFirstChild("Gold") then playerGold = FormatNumber(playerData.Data.Gold.Value) elseif playerData.Data:FindFirstChild("Coins") then playerGold = FormatNumber(playerData.Data.Coins.Value) end
-        end
-    end)
-
-    local infoContent = string.format("`⭐` • Username: ||%s||\n`🎊` • Level: %s\n<:Gem:1493522800282046475> • Gem: %s\n<:Gold:1493522863628488704> • Gold: %s\n**[ Auto Merchant ]**\n```\n%s```", player.Name, playerLevel, playerGem, playerGold, boughtItemsText)
-    
-    local data = { 
-        ["username"] = "Jiramet Hub",
-        ["avatar_url"] = "https://img2.pic.in.th/1000091508.png",
-        ["embeds"] = { { 
-            ["timestamp"] = DateTime.now():ToIsoDate(), 
-            ["footer"] = { ["text"] = "Jiramet Hub (TH)", ["icon_url"] = "https://img1.pic.in.th/images/1000091508.md.png" }, 
-            ["thumbnail"] = { ["url"] = "https://img1.pic.in.th/images/1000091498.th.jpg" }, 
-            ["author"] = { ["name"] = "[🐰EVENT] Re:Rangers X", ["url"] = "https://www.roblox.com/share?code=3f029d7d2a92274e969aae43736011e9&type=ExperienceDetails&stamp=1776061797166", ["icon_url"] = "https://img1.pic.in.th/images/1000091498.md.jpg" }, 
-            ["fields"] = { { ["name"] = "Information", ["value"] = infoContent, ["inline"] = true } } 
-        } } 
-    }
-
-    if requestFunc then pcall(function() requestFunc({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(data) }) end)
-    else pcall(function() game:HttpPost(url, HttpService:JSONEncode(data)) end) end
-end
-
 task.spawn(function()
     while true do
         task.wait(1)
         if JHub.Flags.AutoBuyMerchant then
-            local boughtItemsList, hasBoughtSomething = {}, false
-            
+            local hasBoughtSomething = false
             for ItemName, IsSelected in pairs(JHub.Flags.SelectedItems) do
                 if IsSelected then
                     local boughtAmount, newTotalAmount = SmartAutoBuyMax(ItemName) 
                     if boughtAmount > 0 then
                         hasBoughtSomething = true
-                        table.insert(boughtItemsList, "- " .. ItemName .. " (" .. FormatNumber(boughtAmount) .. ") [Total: " .. FormatNumber(newTotalAmount) .. "]")
                         task.wait(0.5) 
                     end
                 end
@@ -1312,162 +955,101 @@ task.spawn(function()
             
             if hasBoughtSomething then
                 task.wait(10)
-                if JHub.Flags.EnableWebhook and JHub.Flags.WebhookMerchant then
-                    local boughtItemsText = table.concat(boughtItemsList, "\n")
-                    if boughtItemsText == "" then boughtItemsText = "N/A" end
-                    SendMerchantWebhook(boughtItemsText)
-                end
                 task.wait(60) 
             end
         end
     end
 end)
 
-local function SendRewardsToDiscord(mapName, gameStatus, totalTime, playerLevel, dropsText)
-    local url = JHub.Flags.WebhookURL
-    if url == "" or not url:find("discord") then return end
-
-    local infoContent = string.format("`⭐` • Username: ||%s||\n`🎊` • Level: %s\n`🌎` • Map/World: **%s - %s**\n`⏳` • TotalTime: **%s**\n**[ Rewards ]**\n```\n%s\n```", 
-        player.Name, tostring(playerLevel), mapName, gameStatus, totalTime, dropsText)
-        
-    local data = {
-        ["username"] = "Jiramet Hub", 
-        ["avatar_url"] = "https://img2.pic.in.th/1000091508.png", 
-        ["embeds"] = { { 
-            ["timestamp"] = DateTime.now():ToIsoDate(),
-            ["footer"] = { 
-                ["text"] = "Jiramet Hub (TH)", 
-                ["icon_url"] = "https://img1.pic.in.th/images/1000091508.md.png" 
-            }, 
-            ["image"] = { ["url"] = "" },
-            ["thumbnail"] = { 
-                ["url"] = "https://img2.pic.in.th/1000092227.th.jpg" 
-            }, 
-            ["author"] = { 
-                ["name"] = "[👈JJK PART 2] Re:Rangers X", 
-                ["url"] = "https://www.roblox.com/share?code=3f029d7d2a92274e969aae43736011e9&type=ExperienceDetails&stamp=1776061797166", 
-                ["icon_url"] = "https://img2.pic.in.th/1000092227.md.jpg" 
-            }, 
-            ["fields"] = { 
-                { 
-                    ["name"] = "Information", 
-                    ["value"] = infoContent, 
-                    ["inline"] = true 
-                } 
-            }
-        } } 
-    }
-    
-    if requestFunc then pcall(function() requestFunc({ Url = url, Method = "POST", Headers = { ["Content-Type"] = "application/json" }, Body = HttpService:JSONEncode(data) }) end)
-    else pcall(function() game:HttpPost(url, HttpService:JSONEncode(data)) end) end
-end
-
--- ==========================================
--- [ อัปเดต ] ระบบ Webhook ดักจับ RemoteEvent จากเกมโดยตรง (เวอร์ชันแก้บั๊กไม่ส่ง)
--- ==========================================
+-------------------------------------------------------------------------
+--- [ NEW: Auto Match Ended Webhook System (with Total Count) ] ---
+-------------------------------------------------------------------------
 task.spawn(function()
-    -- รอตัว Event แบบไม่มี Timeout เพื่อให้ชัวร์ว่าโหลดสำเร็จแน่ๆ
     local GameEndedUI_Event = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
-    
     local currentRewards = {}
+    local currentStageInfo = {}
+
+    local function SendEndMatchLog()
+        if not JHub.Flags.EnableWebhook or JHub.Flags.WebhookURL == "" then return end
+
+        local GetDataModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GetData"))
+        local PlayerData = GetDataModule.GetData(player)
+        
+        local rewardText = ""
+        if currentRewards and #currentRewards > 0 then
+            for _, item in pairs(currentRewards) do
+                local itemName = tostring(item.Name)
+                local itemAmount = item:FindFirstChild("Amount") and tostring(item.Amount.Value) or "1"
+                
+                local totalAmount = 0
+                if PlayerData then
+                    if PlayerData.Items and PlayerData.Items:FindFirstChild(itemName) then
+                        totalAmount = PlayerData.Items[itemName].Amount.Value
+                    elseif PlayerData.Data and PlayerData.Data:FindFirstChild(itemName) then
+                        totalAmount = PlayerData.Data[itemName].Value
+                    end
+                end
+                
+                rewardText = rewardText .. "• " .. itemName .. " (x" .. FormatNumber(itemAmount) .. ") [total:" .. FormatNumber(totalAmount) .. "]\n"
+            end
+        else
+            rewardText = "ไม่มีรางวัลดรอป"
+        end
+
+        local payload = {
+            ["username"] = "Jiramet Hub", 
+            ["avatar_url"] = "https://img2.pic.in.th/1000091508.png",
+            ["embeds"] = {
+                {
+                    ["title"] = "🎮 Match Ended Summary",
+                    ["color"] = tonumber("0x00FF00"),
+                    ["fields"] = {
+                        { ["name"] = "🌍 ด่าน", ["value"] = currentStageInfo.World .. " - " .. currentStageInfo.Level, ["inline"] = true },
+                        { ["name"] = "⚔️ โหมด", ["value"] = currentStageInfo.Gamemode .. " (" .. currentStageInfo.Difficulty .. ")", ["inline"] = true },
+                        { ["name"] = "⏱️ เวลาที่ใช้", ["value"] = tostring(currentStageInfo.TotalTime) .. " วินาที", ["inline"] = true },
+                        { ["name"] = "🎁 รางวัลที่ได้รับ", ["value"] = rewardText, ["inline"] = false }
+                    },
+                    ["timestamp"] = DateTime.now():ToIsoDate(),
+                    ["footer"] = { ["text"] = "Jiramet Hub (TH)", ["icon_url"] = "https://img1.pic.in.th/images/1000091508.md.png" }
+                }
+            }
+        }
+
+        if requestFunc then
+            pcall(function()
+                requestFunc({
+                    Url = JHub.Flags.WebhookURL,
+                    Method = "POST",
+                    Headers = {["Content-Type"] = "application/json"},
+                    Body = HttpService:JSONEncode(payload)
+                })
+            end)
+        else
+            pcall(function() game:HttpPost(JHub.Flags.WebhookURL, HttpService:JSONEncode(payload)) end)
+        end
+    end
 
     GameEndedUI_Event.OnClientEvent:Connect(function(action, data)
         if not JHub.Flags.EnableWebhook then return end
 
         if action == "Rewards - Items" then
-            -- ดักของรางวัลที่เกมโยนมาให้
             currentRewards = data
-            
         elseif action == "Update - EndedScreen" then
-            -- รันผ่าน task.spawn ป้องกันการบล็อค Thread ถ้าโหลดข้อมูลช้า
-            task.spawn(function()
-                local Values = ReplicatedStorage:WaitForChild("Values", 5)
-                local ValuesGame = Values and Values:WaitForChild("Game", 5)
-                
-                local gamemode = "N/A"
-                local world = "N/A"
-                local level = "N/A"
-                local diff = "N/A"
-
-                -- ใช้ pcall และ WaitForChild แยกรายตัวเพื่อป้องกันโค้ดหยุดการทำงาน
-                if ValuesGame then
-                    pcall(function()
-                        local gmObj = ValuesGame:WaitForChild("Gamemode", 2)
-                        gamemode = gmObj and gmObj.Value or "N/A"
-                        
-                        local wObj = ValuesGame:WaitForChild("World", 2)
-                        world = wObj and wObj.Value or "N/A"
-                        
-                        local lObj = ValuesGame:WaitForChild("Level", 2)
-                        level = lObj and lObj.Value or "N/A"
-                        
-                        local dObj = ValuesGame:WaitForChild("Difficulty", 2)
-                        diff = dObj and dObj.Value or "N/A"
-                    end)
-                end
-                
-                local rawTime = data.TotalTime or 0
-                local formattedTime = tostring(rawTime)
-                if type(rawTime) == "number" then
-                    -- แปลงรูปแบบเวลาเป็น นาที:วินาที เช่น 01:07
-                    formattedTime = string.format("%02d:%02d", math.floor(rawTime/60)%60, rawTime%60)
-                end
-
-                local GetDataModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GetData"))
-                local PlayerData = GetDataModule.GetData(player)
-                
-                local playerLevel = "N/A"
-                if PlayerData and PlayerData:FindFirstChild("Data") and PlayerData.Data:FindFirstChild("Level") then 
-                    playerLevel = tostring(PlayerData.Data.Level.Value) 
-                end
-
-                local dropListText = ""
-                
-                if data.RewardsHead then
-                    local cleanHeadInfo = tostring(data.RewardsHead):gsub("Rewards%s*|%s*", "")
-                    dropListText = dropListText .. "🎯 [Special] : " .. cleanHeadInfo .. "\n"
-                end
-
-                if currentRewards and type(currentRewards) == "table" then
-                    for _, item in pairs(currentRewards) do
-                        local itemName = "Unknown"
-                        local itemAmount = "1"
-                        
-                        if typeof(item) == "Instance" then
-                            itemName = item.Name
-                            if item:FindFirstChild("Amount") then
-                                itemAmount = tostring(item.Amount.Value)
-                            end
-                        elseif type(item) == "table" then
-                            itemName = item.Name or "Unknown"
-                            if item.Amount then
-                                itemAmount = tostring(item.Amount)
-                            end
-                        end
-                        
-                        local totalAmount = 0
-                        if PlayerData then
-                            if PlayerData:FindFirstChild("Items") and PlayerData.Items:FindFirstChild(itemName) then
-                                totalAmount = PlayerData.Items[itemName].Amount.Value
-                            elseif PlayerData:FindFirstChild("Data") and PlayerData.Data:FindFirstChild(itemName) then
-                                totalAmount = PlayerData.Data[itemName].Value
-                            end
-                        end
-                        
-                        dropListText = dropListText .. "• " .. tostring(itemName) .. " (x" .. itemAmount .. ") [total:" .. FormatNumber(totalAmount) .. "]\n"
-                    end
-                end
-
-                if dropListText == "" then dropListText = "N/A" end
-                
-                local fullMapName = world .. " - " .. level
-                local gameStatus = gamemode .. " (" .. diff .. ")"
-                
-                SendRewardsToDiscord(fullMapName, gameStatus, formattedTime, playerLevel, dropListText)
-            end)
+            local ValuesGame = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Game")
+            
+            currentStageInfo = {
+                Gamemode = ValuesGame:WaitForChild("Gamemode").Value,
+                World = ValuesGame:WaitForChild("World").Value,
+                Level = ValuesGame:WaitForChild("Level").Value,
+                Difficulty = ValuesGame:WaitForChild("Difficulty").Value,
+                TotalTime = data.TotalTime or 0
+            }
+            
+            SendEndMatchLog()
         end
     end)
 end)
+-------------------------------------------------------------------------
 
 task.spawn(function()
     local RobloxPromptGui = CoreGui:WaitForChild("RobloxPromptGui", math.huge)
