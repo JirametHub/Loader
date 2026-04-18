@@ -1,0 +1,144 @@
+-- โหลด Fluent UI Library
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+
+-- สร้างหน้าต่าง UI
+local Window = Fluent:CreateWindow({
+    Title = "Jiramet Hub (TH)",
+    SubTitle = "Webhook Manager",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(500, 320),
+    Acrylic = true, 
+    Theme = "Dark",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+-- สร้างหมวดหมู่ (Tab)
+local Tabs = {
+    Webhook = Window:AddTab({ Title = "Webhook", Icon = "webhook" })
+}
+
+-- ตัวแปรเก็บสถานะ
+local WebhookURL = ""
+local WebhookEnabled = false
+
+-- กล่องใส่ข้อความสำหรับ URL
+local Input = Tabs.Webhook:AddInput("WebhookInput", {
+    Title = "Discord Webhook URL",
+    Default = "",
+    Placeholder = "วางลิงก์ Webhook ของคุณที่นี่...",
+    Numeric = false,
+    Finished = false,
+    Callback = function(Value)
+        WebhookURL = Value
+    end
+})
+
+-- ปุ่มเปิด/ปิดการทำงาน
+local Toggle = Tabs.Webhook:AddToggle("WebhookToggle", {
+    Title = "เปิดใช้งาน Auto Webhook",
+    Default = false,
+    Callback = function(Value)
+        WebhookEnabled = Value
+    end
+})
+
+------------------------------------------------------------------------
+-- Logic ระบบดักจับและส่งข้อมูล (ผูกกับ UI ด้านบน)
+------------------------------------------------------------------------
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local GameEndedUI_Event = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
+
+-- โหลด Module ข้อมูลผู้เล่น (ใช้วิธีเดียวกับที่เกมใช้)
+local GetDataModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GetData"))
+
+local currentRewards = {}
+local currentStageInfo = {}
+
+local function SendEndMatchLog()
+    if not WebhookEnabled or WebhookURL == "" then return end
+
+    -- ดึงข้อมูลกระเป๋าปัจจุบันของผู้เล่น
+    local PlayerData = GetDataModule.GetData(LocalPlayer)
+    
+    local rewardText = ""
+    if currentRewards and #currentRewards > 0 then
+        for _, item in pairs(currentRewards) do
+            local itemName = tostring(item.Name)
+            local itemAmount = item:FindFirstChild("Amount") and tostring(item.Amount.Value) or "1"
+            
+            -- ค้นหาจำนวนรวมทั้งหมดที่มีในกระเป๋า
+            local totalAmount = 0
+            if PlayerData then
+                if PlayerData.Items and PlayerData.Items:FindFirstChild(itemName) then
+                    totalAmount = PlayerData.Items[itemName].Amount.Value
+                elseif PlayerData.Data and PlayerData.Data:FindFirstChild(itemName) then
+                    totalAmount = PlayerData.Data[itemName].Value
+                end
+            end
+            
+            -- จัดฟอร์แมตตามที่ต้องการ: ไอเทม (xจำนวนที่ดรอป) [total:จำนวนทั้งหมด]
+            rewardText = rewardText .. "• " .. itemName .. " (x" .. itemAmount .. ") [total:" .. tostring(totalAmount) .. "]\n"
+        end
+    else
+        rewardText = "ไม่มีรางวัลดรอป"
+    end
+
+    local payload = {
+        embeds = {
+            {
+                title = "🎮 Match Ended Summary",
+                color = tonumber("0x00FF00"),
+                fields = {
+                    { name = "🌍 ด่าน", value = currentStageInfo.World .. " - " .. currentStageInfo.Level, inline = true },
+                    { name = "⚔️ โหมด", value = currentStageInfo.Gamemode .. " (" .. currentStageInfo.Difficulty .. ")", inline = true },
+                    { name = "⏱️ เวลาที่ใช้", value = tostring(currentStageInfo.TotalTime) .. " วินาที", inline = true },
+                    { name = "🎁 รางวัลที่ได้รับ", value = rewardText, inline = false }
+                }
+            }
+        }
+    }
+
+    -- ฟังก์ชัน Request
+    local req = (syn and syn.request) or http_request or request or fluxus.request
+    if req then
+        pcall(function()
+            req({
+                Url = WebhookURL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HttpService:JSONEncode(payload)
+            })
+        end)
+    end
+end
+
+-- ดักจับข้อมูลจากเกม
+GameEndedUI_Event.OnClientEvent:Connect(function(action, data)
+    if not WebhookEnabled then return end
+
+    if action == "Rewards - Items" then
+        currentRewards = data
+    elseif action == "Update - EndedScreen" then
+        local ValuesGame = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Game")
+        
+        currentStageInfo = {
+            Gamemode = ValuesGame:WaitForChild("Gamemode").Value,
+            World = ValuesGame:WaitForChild("World").Value,
+            Level = ValuesGame:WaitForChild("Level").Value,
+            Difficulty = ValuesGame:WaitForChild("Difficulty").Value,
+            TotalTime = data.TotalTime or 0
+        }
+        
+        SendEndMatchLog()
+    end
+end)
+
+Fluent:Notify({
+    Title = "Webhook Manager",
+    Content = "โหลด UI เสร็จสิ้น กรุณาใส่ URL และกดเปิดใช้งาน",
+    Duration = 5
+})
