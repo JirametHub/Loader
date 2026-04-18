@@ -408,7 +408,7 @@ do
 
             local logForm = tab:PageSection({ Title = "Changelog" }):Form()
             local logData = {
-                {Ver = "Version 1.1.6", Desc = "Integrate RemoteEvent Webhook Capture & New Custom Format"}
+                {Ver = "Version 1.1.6", Desc = "Fixed Webhook Rewards Event Fetching & Format"}
             }
             for _, log in ipairs(logData) do
                 local r = logForm:Row()
@@ -695,7 +695,7 @@ do
     end
 end
 
-ShowNotif("Script Loaded Successfully", "Version 1.1.6 (RemoteEvent Webhook)", cascade.Symbols.bell)
+ShowNotif("Script Loaded Successfully", "Version 1.1.6 (Fix Webhook Fetch)", cascade.Symbols.bell)
 
 task.spawn(function()
     while true do
@@ -1363,50 +1363,57 @@ local function SendRewardsToDiscord(mapName, gameStatus, totalTime, playerLevel,
 end
 
 -- ==========================================
--- [ อัปเดต ] ระบบ Webhook ดักจับ RemoteEvent จากเกมโดยตรง (แม่นยำและเสถียรที่สุด)
+-- [ อัปเดต ] ระบบ Webhook ดักจับ RemoteEvent จากเกมโดยตรง (เวอร์ชันแก้บั๊กไม่ส่ง)
 -- ==========================================
 task.spawn(function()
-    local GameEndedUI_Event = ReplicatedStorage:WaitForChild("Remote", 10)
-    if GameEndedUI_Event then
-        GameEndedUI_Event = GameEndedUI_Event:WaitForChild("Client", 10)
-        if GameEndedUI_Event then
-            GameEndedUI_Event = GameEndedUI_Event:WaitForChild("UI", 10)
-            if GameEndedUI_Event then
-                GameEndedUI_Event = GameEndedUI_Event:WaitForChild("GameEndedUI", 10)
-            end
-        end
-    end
-
-    if not GameEndedUI_Event then return end
-
+    -- รอตัว Event แบบไม่มี Timeout เพื่อให้ชัวร์ว่าโหลดสำเร็จแน่ๆ
+    local GameEndedUI_Event = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
+    
     local currentRewards = {}
 
     GameEndedUI_Event.OnClientEvent:Connect(function(action, data)
         if not JHub.Flags.EnableWebhook then return end
 
         if action == "Rewards - Items" then
-            -- เมื่อเกมส่งข้อมูลไอเทมดรอปมาให้ ให้เก็บไว้ในตัวแปรนี้ทันที
+            -- ดักของรางวัลที่เกมโยนมาให้
             currentRewards = data
             
         elseif action == "Update - EndedScreen" then
-            -- เมื่อเกมแจ้งให้โชว์หน้าจอ End Screen ให้ดึงข้อมูลด่านพร้อมจัดส่ง Webhook
-            pcall(function()
-                local ValuesGame = ReplicatedStorage:FindFirstChild("Values") and ReplicatedStorage.Values:FindFirstChild("Game")
-                if not ValuesGame then return end
+            -- รันผ่าน task.spawn ป้องกันการบล็อค Thread ถ้าโหลดข้อมูลช้า
+            task.spawn(function()
+                local Values = ReplicatedStorage:WaitForChild("Values", 5)
+                local ValuesGame = Values and Values:WaitForChild("Game", 5)
                 
-                local gamemode = ValuesGame:FindFirstChild("Gamemode") and ValuesGame.Gamemode.Value or "N/A"
-                local world = ValuesGame:FindFirstChild("World") and ValuesGame.World.Value or "N/A"
-                local level = ValuesGame:FindFirstChild("Level") and ValuesGame.Level.Value or "N/A"
-                local diff = ValuesGame:FindFirstChild("Difficulty") and ValuesGame.Difficulty.Value or "N/A"
+                local gamemode = "N/A"
+                local world = "N/A"
+                local level = "N/A"
+                local diff = "N/A"
+
+                -- ใช้ pcall และ WaitForChild แยกรายตัวเพื่อป้องกันโค้ดหยุดการทำงาน
+                if ValuesGame then
+                    pcall(function()
+                        local gmObj = ValuesGame:WaitForChild("Gamemode", 2)
+                        gamemode = gmObj and gmObj.Value or "N/A"
+                        
+                        local wObj = ValuesGame:WaitForChild("World", 2)
+                        world = wObj and wObj.Value or "N/A"
+                        
+                        local lObj = ValuesGame:WaitForChild("Level", 2)
+                        level = lObj and lObj.Value or "N/A"
+                        
+                        local dObj = ValuesGame:WaitForChild("Difficulty", 2)
+                        diff = dObj and dObj.Value or "N/A"
+                    end)
+                end
                 
                 local rawTime = data.TotalTime or 0
                 local formattedTime = tostring(rawTime)
                 if type(rawTime) == "number" then
-                    -- แปลงวินาทีเป็นฟอร์แมต 00:00:00
-                    formattedTime = string.format("%02d:%02d:%02d", math.floor(rawTime/3600), math.floor(rawTime/60)%60, rawTime%60)
+                    -- แปลงรูปแบบเวลาเป็น นาที:วินาที เช่น 01:07
+                    formattedTime = string.format("%02d:%02d", math.floor(rawTime/60)%60, rawTime%60)
                 end
 
-                local GetDataModule = require(ReplicatedStorage.Shared.GetData)
+                local GetDataModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GetData"))
                 local PlayerData = GetDataModule.GetData(player)
                 
                 local playerLevel = "N/A"
@@ -1416,19 +1423,16 @@ task.spawn(function()
 
                 local dropListText = ""
                 
-                -- ตรวจสอบของรางวัลพิเศษถ้ามีแนบมา
                 if data.RewardsHead then
                     local cleanHeadInfo = tostring(data.RewardsHead):gsub("Rewards%s*|%s*", "")
                     dropListText = dropListText .. "🎯 [Special] : " .. cleanHeadInfo .. "\n"
                 end
 
-                -- แปลงข้อมูลของรางวัลที่ดักไว้มาเป็น Text
-                if currentRewards and type(currentRewards) == "table" and #currentRewards > 0 then
+                if currentRewards and type(currentRewards) == "table" then
                     for _, item in pairs(currentRewards) do
                         local itemName = "Unknown"
                         local itemAmount = "1"
                         
-                        -- เช็คประเภทของข้อมูลเพราะเกมอาจจะส่งมาได้ทั้งแบบ Instance และ Table
                         if typeof(item) == "Instance" then
                             itemName = item.Name
                             if item:FindFirstChild("Amount") then
@@ -1450,14 +1454,14 @@ task.spawn(function()
                             end
                         end
                         
-                        dropListText = dropListText .. "- " .. tostring(itemName) .. " (x" .. itemAmount .. ") [Total: " .. FormatNumber(totalAmount) .. "]\n"
+                        dropListText = dropListText .. "• " .. tostring(itemName) .. " (x" .. itemAmount .. ") [total:" .. FormatNumber(totalAmount) .. "]\n"
                     end
                 end
 
                 if dropListText == "" then dropListText = "N/A" end
                 
-                local fullMapName = world .. " (" .. level .. ")"
-                local gameStatus = gamemode .. " - " .. diff
+                local fullMapName = world .. " - " .. level
+                local gameStatus = gamemode .. " (" .. diff .. ")"
                 
                 SendRewardsToDiscord(fullMapName, gameStatus, formattedTime, playerLevel, dropListText)
             end)
