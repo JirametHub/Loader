@@ -358,7 +358,7 @@ do
 
             local logForm = tab:PageSection({ Title = "Changelog" }):Form()
             local logData = {
-                {Ver = "Version 1.1.9", Desc = "Fixed Webhook Match Ended & Added Notification"},
+                {Ver = "Version 1.1.10", Desc = "Exact Logic Merged for End Match Webhook"},
                 {Ver = "Version 1.1.8", Desc = "Added Auto Webhook on Match Ended (Includes Total Items)"},
                 {Ver = "Version 1.1.7", Desc = "Removed Webhook Backend Logic for better performance (UI Only)"}
             }
@@ -647,7 +647,7 @@ do
     end
 end
 
-ShowNotif("Script Loaded Successfully", "Version 1.1.9 (Webhook Included)", cascade.Symbols.bell)
+ShowNotif("Script Loaded Successfully", "Version 1.1.10 (Exact Webhook Logic Merged)", cascade.Symbols.bell)
 
 task.spawn(function()
     while true do
@@ -963,70 +963,55 @@ task.spawn(function()
 end)
 
 -------------------------------------------------------------------------
---- [ NEW: Auto Match Ended Webhook System (with Total Count) ] ---
+--- [ Exact Merge: Auto Match Ended Webhook System ] ---
 -------------------------------------------------------------------------
 task.spawn(function()
     local GameEndedUI_Event = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
+    local GetDataModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GetData"))
+
     local currentRewards = {}
     local currentStageInfo = {}
 
     local function SendEndMatchLog()
         if not JHub.Flags.EnableWebhook or JHub.Flags.WebhookURL == "" then return end
 
-        local GetDataModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GetData"))
         local PlayerData = GetDataModule.GetData(player)
         
         local rewardText = ""
-        if currentRewards and type(currentRewards) == "table" and #currentRewards > 0 then
+        if currentRewards and #currentRewards > 0 then
             for _, item in pairs(currentRewards) do
-                pcall(function()
-                    local itemName = tostring(item.Name or "Unknown")
-                    local itemAmount = "1"
-                    
-                    if typeof(item) == "Instance" and item:FindFirstChild("Amount") then
-                        itemAmount = tostring(item.Amount.Value)
-                    elseif type(item) == "table" and item.Amount then
-                        if type(item.Amount) == "table" then itemAmount = tostring(item.Amount.Value or 1)
-                        elseif typeof(item.Amount) == "Instance" then itemAmount = tostring(item.Amount.Value)
-                        else itemAmount = tostring(item.Amount) end
+                local itemName = tostring(item.Name)
+                local itemAmount = item:FindFirstChild("Amount") and tostring(item.Amount.Value) or "1"
+                
+                local totalAmount = 0
+                if PlayerData then
+                    if PlayerData.Items and PlayerData.Items:FindFirstChild(itemName) then
+                        totalAmount = PlayerData.Items[itemName].Amount.Value
+                    elseif PlayerData.Data and PlayerData.Data:FindFirstChild(itemName) then
+                        totalAmount = PlayerData.Data[itemName].Value
                     end
-                    
-                    local totalAmount = 0
-                    if PlayerData then
-                        if PlayerData.Items and PlayerData.Items:FindFirstChild(itemName) then
-                            totalAmount = PlayerData.Items[itemName].Amount.Value
-                        elseif PlayerData.Data and PlayerData.Data:FindFirstChild(itemName) then
-                            totalAmount = PlayerData.Data[itemName].Value
-                        end
-                    end
-                    
-                    rewardText = rewardText .. "• " .. itemName .. " (x" .. FormatNumber(itemAmount) .. ") [total:" .. FormatNumber(totalAmount) .. "]\n"
-                end)
+                end
+                
+                rewardText = rewardText .. "• " .. itemName .. " (x" .. itemAmount .. ") [total:" .. tostring(totalAmount) .. "]\n"
             end
         else
             rewardText = "ไม่มีรางวัลดรอป"
         end
 
         local payload = {
-            ["username"] = "Jiramet Hub", 
-            ["avatar_url"] = "https://img2.pic.in.th/1000091508.png",
-            ["embeds"] = {
+            embeds = {
                 {
-                    ["title"] = "🎮 Match Ended Summary",
-                    ["color"] = tonumber("0x00FF00"),
-                    ["fields"] = {
-                        { ["name"] = "🌍 ด่าน", ["value"] = currentStageInfo.World .. " - " .. currentStageInfo.Level, ["inline"] = true },
-                        { ["name"] = "⚔️ โหมด", ["value"] = currentStageInfo.Gamemode .. " (" .. currentStageInfo.Difficulty .. ")", ["inline"] = true },
-                        { ["name"] = "⏱️ เวลาที่ใช้", ["value"] = tostring(currentStageInfo.TotalTime) .. " วินาที", ["inline"] = true },
-                        { ["name"] = "🎁 รางวัลที่ได้รับ", ["value"] = rewardText, ["inline"] = false }
-                    },
-                    ["timestamp"] = DateTime.now():ToIsoDate(),
-                    ["footer"] = { ["text"] = "Jiramet Hub (TH)", ["icon_url"] = "https://img1.pic.in.th/images/1000091508.md.png" }
+                    title = "🎮 Match Ended Summary",
+                    color = tonumber("0x00FF00"),
+                    fields = {
+                        { name = "🌍 ด่าน", value = currentStageInfo.World .. " - " .. currentStageInfo.Level, inline = true },
+                        { name = "⚔️ โหมด", value = currentStageInfo.Gamemode .. " (" .. currentStageInfo.Difficulty .. ")", inline = true },
+                        { name = "⏱️ เวลาที่ใช้", value = tostring(currentStageInfo.TotalTime) .. " วินาที", inline = true },
+                        { name = "🎁 รางวัลที่ได้รับ", value = rewardText, inline = false }
+                    }
                 }
             }
         }
-
-        ShowNotif("Webhook", "กำลังส่งข้อมูล Match Ended ไปที่ Discord...", cascade.Symbols.network)
 
         if requestFunc then
             pcall(function()
@@ -1048,19 +1033,17 @@ task.spawn(function()
         if action == "Rewards - Items" then
             currentRewards = data
         elseif action == "Update - EndedScreen" then
-            pcall(function()
-                local ValuesGame = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Game")
-                
-                currentStageInfo = {
-                    Gamemode = ValuesGame:WaitForChild("Gamemode").Value,
-                    World = ValuesGame:WaitForChild("World").Value,
-                    Level = ValuesGame:WaitForChild("Level").Value,
-                    Difficulty = ValuesGame:WaitForChild("Difficulty").Value,
-                    TotalTime = data.TotalTime or 0
-                }
-                
-                SendEndMatchLog()
-            end)
+            local ValuesGame = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Game")
+            
+            currentStageInfo = {
+                Gamemode = ValuesGame:WaitForChild("Gamemode").Value,
+                World = ValuesGame:WaitForChild("World").Value,
+                Level = ValuesGame:WaitForChild("Level").Value,
+                Difficulty = ValuesGame:WaitForChild("Difficulty").Value,
+                TotalTime = data.TotalTime or 0
+            }
+            
+            SendEndMatchLog()
         end
     end)
 end)
