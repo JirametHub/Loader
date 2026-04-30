@@ -1,144 +1,151 @@
--- โหลด Fluent UI Library
-local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
-
--- สร้างหน้าต่าง UI
-local Window = Fluent:CreateWindow({
-    Title = "Jiramet Hub (TH)",
-    SubTitle = "Webhook Manager",
-    TabWidth = 160,
-    Size = UDim2.fromOffset(500, 320),
-    Acrylic = true, 
-    Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.LeftControl
-})
-
--- สร้างหมวดหมู่ (Tab)
-local Tabs = {
-    Webhook = Window:AddTab({ Title = "Webhook", Icon = "webhook" })
-}
-
--- ตัวแปรเก็บสถานะ
-local WebhookURL = ""
-local WebhookEnabled = false
-
--- กล่องใส่ข้อความสำหรับ URL
-local Input = Tabs.Webhook:AddInput("WebhookInput", {
-    Title = "Discord Webhook URL",
-    Default = "",
-    Placeholder = "วางลิงก์ Webhook ของคุณที่นี่...",
-    Numeric = false,
-    Finished = false,
-    Callback = function(Value)
-        WebhookURL = Value
-    end
-})
-
--- ปุ่มเปิด/ปิดการทำงาน
-local Toggle = Tabs.Webhook:AddToggle("WebhookToggle", {
-    Title = "เปิดใช้งาน Auto Webhook",
-    Default = false,
-    Callback = function(Value)
-        WebhookEnabled = Value
-    end
-})
-
-------------------------------------------------------------------------
--- Logic ระบบดักจับและส่งข้อมูล (ผูกกับ UI ด้านบน)
-------------------------------------------------------------------------
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local HttpService = game:GetService("HttpService")
+-- ==========================================
+-- [ SIMON TRIAL ELEMENT TRACKER - STANDALONE ]
+-- ==========================================
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local player = Players.LocalPlayer
 
-local GameEndedUI_Event = ReplicatedStorage:WaitForChild("Remote"):WaitForChild("Client"):WaitForChild("UI"):WaitForChild("GameEndedUI")
-
--- โหลด Module ข้อมูลผู้เล่น (ใช้วิธีเดียวกับที่เกมใช้)
-local GetDataModule = require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("GetData"))
-
-local currentRewards = {}
-local currentStageInfo = {}
-
-local function SendEndMatchLog()
-    if not WebhookEnabled or WebhookURL == "" then return end
-
-    -- ดึงข้อมูลกระเป๋าปัจจุบันของผู้เล่น
-    local PlayerData = GetDataModule.GetData(LocalPlayer)
-    
-    local rewardText = ""
-    if currentRewards and #currentRewards > 0 then
-        for _, item in pairs(currentRewards) do
-            local itemName = tostring(item.Name)
-            local itemAmount = item:FindFirstChild("Amount") and tostring(item.Amount.Value) or "1"
-            
-            -- ค้นหาจำนวนรวมทั้งหมดที่มีในกระเป๋า
-            local totalAmount = 0
-            if PlayerData then
-                if PlayerData.Items and PlayerData.Items:FindFirstChild(itemName) then
-                    totalAmount = PlayerData.Items[itemName].Amount.Value
-                elseif PlayerData.Data and PlayerData.Data:FindFirstChild(itemName) then
-                    totalAmount = PlayerData.Data[itemName].Value
-                end
-            end
-            
-            -- จัดฟอร์แมตตามที่ต้องการ: ไอเทม (xจำนวนที่ดรอป) [total:จำนวนทั้งหมด]
-            rewardText = rewardText .. "• " .. itemName .. " (x" .. itemAmount .. ") [total:" .. tostring(totalAmount) .. "]\n"
-        end
-    else
-        rewardText = "ไม่มีรางวัลดรอป"
-    end
-
-    local payload = {
-        embeds = {
-            {
-                title = "🎮 Match Ended Summary",
-                color = tonumber("0x00FF00"),
-                fields = {
-                    { name = "🌍 ด่าน", value = currentStageInfo.World .. " - " .. currentStageInfo.Level, inline = true },
-                    { name = "⚔️ โหมด", value = currentStageInfo.Gamemode .. " (" .. currentStageInfo.Difficulty .. ")", inline = true },
-                    { name = "⏱️ เวลาที่ใช้", value = tostring(currentStageInfo.TotalTime) .. " วินาที", inline = true },
-                    { name = "🎁 รางวัลที่ได้รับ", value = rewardText, inline = false }
-                }
-            }
-        }
-    }
-
-    -- ฟังก์ชัน Request
-    local req = (syn and syn.request) or http_request or request or fluxus.request
-    if req then
-        pcall(function()
-            req({
-                Url = WebhookURL,
-                Method = "POST",
-                Headers = {["Content-Type"] = "application/json"},
-                Body = HttpService:JSONEncode(payload)
-            })
-        end)
-    end
+-- ลบ UI เก่าทิ้งถ้าเคยรันแล้ว
+local guiName = "SimonTrialTracker_GUI"
+if CoreGui:FindFirstChild(guiName) then
+    CoreGui[guiName]:Destroy()
 end
 
--- ดักจับข้อมูลจากเกม
-GameEndedUI_Event.OnClientEvent:Connect(function(action, data)
-    if not WebhookEnabled then return end
+-- สร้างหน้าต่าง UI ใหม่
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = guiName
+ScreenGui.Parent = CoreGui
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 
-    if action == "Rewards - Items" then
-        currentRewards = data
-    elseif action == "Update - EndedScreen" then
-        local ValuesGame = ReplicatedStorage:WaitForChild("Values"):WaitForChild("Game")
-        
-        currentStageInfo = {
-            Gamemode = ValuesGame:WaitForChild("Gamemode").Value,
-            World = ValuesGame:WaitForChild("World").Value,
-            Level = ValuesGame:WaitForChild("Level").Value,
-            Difficulty = ValuesGame:WaitForChild("Difficulty").Value,
-            TotalTime = data.TotalTime or 0
-        }
-        
-        SendEndMatchLog()
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Parent = ScreenGui
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Position = UDim2.new(0.05, 0, 0.4, 0)
+MainFrame.Size = UDim2.new(0, 220, 0, 270)
+MainFrame.Active = true
+MainFrame.Draggable = true -- ทำให้ลากบนหน้าจอได้
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Name = "Title"
+Title.Parent = MainFrame
+Title.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.Font = Enum.Font.GothamBold
+Title.Text = " Element Tracker"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.TextSize = 14
+Title.TextXAlignment = Enum.TextXAlignment.Left
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 8)
+TitleCorner.Parent = Title
+
+-- ลบขอบมนด้านล่างของ Title ให้เนียนไปกับ MainFrame
+local TitleBottomFix = Instance.new("Frame")
+TitleBottomFix.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+TitleBottomFix.BorderSizePixel = 0
+TitleBottomFix.Position = UDim2.new(0, 0, 1, -5)
+TitleBottomFix.Size = UDim2.new(1, 0, 0, 5)
+TitleBottomFix.Parent = Title
+
+local ListLayout = Instance.new("UIListLayout")
+ListLayout.Parent = MainFrame
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ListLayout.Padding = UDim.new(0, 5)
+
+-- เว้นระยะให้ Title
+local Spacer = Instance.new("Frame")
+Spacer.BackgroundTransparency = 1
+Spacer.Size = UDim2.new(1, 0, 0, 35)
+Spacer.Parent = MainFrame
+
+local ElementsList = {
+    pth_u_leaves = "Leaves",
+    pth_u_fire = "Fire",
+    pth_u_aqua = "Aqua",
+    pth_u_ice = "Ice",
+    pth_u_moon = "Moon",
+    pth_u_sun = "Sun",
+    pth_u_dark = "Dark",
+    pth_u_lightning = "Lightning"
+}
+
+local ElementLabels = {}
+
+for id, name in pairs(ElementsList) do
+    local lbl = Instance.new("TextLabel")
+    lbl.Parent = MainFrame
+    lbl.BackgroundTransparency = 1
+    lbl.Size = UDim2.new(1, -20, 0, 20)
+    lbl.Position = UDim2.new(0, 10, 0, 0)
+    lbl.Font = Enum.Font.Gotham
+    lbl.Text = name .. ": Loading..."
+    lbl.TextColor3 = Color3.fromRGB(200, 200, 200)
+    lbl.TextSize = 13
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    ElementLabels[id] = lbl
+end
+
+-- ==========================================
+-- [ LOGIC: เจาะหาข้อมูลเควสต์แบบเจาะลึก ]
+-- ==========================================
+task.spawn(function()
+    while true do
+        task.wait(1)
+        pcall(function()
+            local GetDataModule = require(ReplicatedStorage.Shared.GetData)
+            local playerData = GetDataModule.GetData(player)
+            if not playerData then return end
+
+            local foundData = {}
+
+            -- ใช้ GetDescendants() มุดหาโฟลเดอร์เควสต์ในทุกชั้นของ Data
+            for _, item in ipairs(playerData:GetDescendants()) do
+                if ElementsList[item.Name] then
+                    local pVal = item:FindFirstChild("progress") and item.progress.Value or 0
+                    local nVal = item:FindFirstChild("questneed") and item.questneed.Value or 500
+                    
+                    foundData[item.Name] = { progress = pVal, need = nVal }
+                end
+            end
+
+            -- อัปเดต UI 
+            for id, name in pairs(ElementsList) do
+                local lbl = ElementLabels[id]
+                if lbl then
+                    if foundData[id] then
+                        local current = foundData[id].progress
+                        local max = foundData[id].need
+                        lbl.Text = "  " .. name .. ": " .. current .. " / " .. max
+                        
+                        -- เปลี่ยนสีถ้าเต็ม
+                        if current >= max then
+                            lbl.TextColor3 = Color3.fromRGB(100, 255, 100) -- สีเขียว
+                        else
+                            lbl.TextColor3 = Color3.fromRGB(255, 255, 255) -- สีขาวปกติ
+                        end
+                    else
+                        -- กรณีที่ยังไม่เคยเก็บธาตุนั้นได้เลย ข้อมูลยังไม่ถูกสร้างใน Data
+                        lbl.Text = "  " .. name .. ": 0 / 500"
+                        lbl.TextColor3 = Color3.fromRGB(150, 150, 150) -- สีเทา
+                    end
+                end
+            end
+        end)
     end
 end)
 
-Fluent:Notify({
-    Title = "Webhook Manager",
-    Content = "โหลด UI เสร็จสิ้น กรุณาใส่ URL และกดเปิดใช้งาน",
-    Duration = 5
+-- แจ้งเตือนเมื่อรันสคริปต์สำเร็จ
+local StarterGui = game:GetService("StarterGui")
+StarterGui:SetCore("SendNotification", {
+    Title = "Tracker Loaded",
+    Text = "Element tracker is now running.",
+    Duration = 3
 })
